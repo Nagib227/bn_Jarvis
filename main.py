@@ -7,27 +7,25 @@ import struct
 import subprocess
 import sys
 import time
-from ctypes import POINTER, cast
 
-# import openai
-# from openai import error
+import openai
+from openai import error
 import pvporcupine
 import vosk
 import yaml
-from comtypes import CLSCTX_ALL
 from fuzzywuzzy import fuzz
 from pvrecorder import PvRecorder
-from pycaw.pycaw import (
-    AudioUtilities,
-    IAudioEndpointVolume
-)
-from rich import print
 
 import wave
+import contextlib
 from pygame import mixer
 
+import tts
 import config
-from commands import *
+
+from commands_browser import *
+from commands_gaming import *
+from commands_pk import *
 
 
 mixer.init()
@@ -39,11 +37,11 @@ VA_CMD_LIST = yaml.safe_load(
 )
 
 # ChatGPT vars
-# system_message = {"role": "system", "content": "Ты голосовой ассистент из железного человека."}
-# message_log = [system_message]
+system_message = {"role": "system", "content": "Ты голосовой ассистент из железного человека."}
+message_log = [system_message]
 
 # init openai
-# openai.api_key = config.OPENAI_TOKEN
+openai.api_key = config.OPENAI_TOKEN
 
 # PORCUPINE
 porcupine = pvporcupine.create(
@@ -61,17 +59,58 @@ kaldi_rec = vosk.KaldiRecognizer(model, samplerate)
 q = queue.Queue()
 
 
+def gpt_answer():
+    global message_log
+
+    model_engine = "gpt-3.5-turbo"
+    max_tokens = 256  # default 1024
+    try:
+        response = openai.ChatCompletion.create(
+            model=model_engine,
+            messages=message_log,
+            max_tokens=max_tokens,
+            temperature=0.7,
+            top_p=1,
+            stop=None
+        )
+    except (error.TryAgain, error.ServiceUnavailableError):
+        return "чат джипити перегружен!"
+    except openai.OpenAIError as ex:
+        # если ошибка - это макс длина контекста, то возвращаем ответ с очищенным контекстом
+        if ex.code == "context_length_exceeded":
+            message_log = [system_message, message_log[-1]]
+            return gpt_answer()
+        else:
+            return "Не удалось подключиться к джипити"
+
+    # Find the first response from the chatbot that has text in it (some responses may not have text)
+    for choice in response.choices:
+        if "text" in choice:
+            return choice.text
+
+    # If no response with text is found, return the first response's content (which may be empty)
+    return response.choices[0].message.content
+
+
 # play(f'{CDIR}\\sound\\ok{random.choice([1, 2, 3, 4])}.wav')
 def say(filename):
+    with contextlib.closing(wave.open(filename, 'r')) as f:
+        frames = f.getnframes()
+        rate = f.getframerate()
+    duration = frames / float(rate)
+    
     mixer.music.load(filename)
     mixer.music.play()
+    time.sleep(duration)
 
 def play(phrase, wait_done=True):
     global recorder
     filename = f"{CDIR}\\sound\\"
 
-    if phrase == "greet":  # for py 3.8
+    if phrase == "greet":
         filename += f"greet{random.choice([1, 2, 3])}.wav"
+    elif phrase == "ok1":
+        filename += f"ok1.wav"
     elif phrase == "ok":
         filename += f"ok{random.choice([1, 2, 3])}.wav"
     elif phrase == "not_found":
@@ -96,6 +135,12 @@ def play(phrase, wait_done=True):
         recorder.start()
 
 
+def q_callback(indata, frames, time, status):
+    if status:
+        print(status, file=sys.stderr)
+    q.put(bytes(indata))
+
+
 def va_respond(voice: str):
     global recorder, message_log, first_request
     print(f"Распознано: {voice}")
@@ -107,8 +152,12 @@ def va_respond(voice: str):
     if len(cmd['cmd'].strip()) <= 0:
         return False
     elif cmd['percent'] < 70 or cmd['cmd'] not in VA_CMD_LIST.keys():
-        if fuzz.ratio(voice.join(voice.split()[:1]).strip(), "скажи") > 75:
-
+        if fuzz.ratio(voice.join(voice.split()[:1]).strip(), "найди") > 75:
+            play("ok")
+            browser_search(voice.join(voice.split()[1:]).strip())
+            return False
+        elif fuzz.ratio(voice.join(voice.split()[:1]).strip(), "скажи") > 75:
+            play("ok1")
             message_log.append({"role": "user", "content": voice})
             response = gpt_answer()
             message_log.append({"role": "assistant", "content": response})
@@ -121,8 +170,6 @@ def va_respond(voice: str):
         else:
             play("not_found")
             time.sleep(1)
-
-        return False
     else:
         execute_cmd(cmd['cmd'], voice)
         return True
@@ -160,88 +207,52 @@ def execute_cmd(cmd: str, voice: str):
     elif cmd == 'close_browser':
         close_browser()
         play("ok")
-
+    elif cmd == 'open_bn':
+        open_page(page="https://bread-network.ru/")
+        play("ok")
     elif cmd == 'open_google':
         open_page(page="https://www.google.com/")
         play("ok")
-
     elif cmd == 'open_youtube':
         open_page(page="https://www.youtube.com/")
         play("ok")
+    elif cmd == 'music':
+        open_page(page="https://rur.hitmotop.com/")
+        open_page(page="https://music.yandex.ru/promo/quiz/?utm_source=direct_network&utm_medium=paid_performance&utm_campaign=90062188%7CMSCAMP-4_[MU-P]_%7BWM:N%7D_RU-225_goal-PL_Tovarnaya-Quiz-Domen&utm_content=cid%7C90062188%7Cgid%7C5230967356%7Caid%7C14777156718&yclid=12164668103123533823/")
+        play("ok")
 
-    # elif cmd == 'music':
-    #     subprocess.Popen([f'{CDIR}\\custom-commands\\Run music.exe'])
-    #     play("ok")
-    #
-    # elif cmd == 'music_off':
-    #     subprocess.Popen([f'{CDIR}\\custom-commands\\Stop music.exe'])
-    #     time.sleep(0.2)
-    #     play("ok")
-    #
-    # elif cmd == 'music_save':
-    #     subprocess.Popen([f'{CDIR}\\custom-commands\\Save music.exe'])
-    #     time.sleep(0.2)
-    #     play("ok")
-    #
-    # elif cmd == 'music_next':
-    #     subprocess.Popen([f'{CDIR}\\custom-commands\\Next music.exe'])
-    #     time.sleep(0.2)
-    #     play("ok")
-    #
-    # elif cmd == 'music_prev':
-    #     subprocess.Popen([f'{CDIR}\\custom-commands\\Prev music.exe'])
-    #     time.sleep(0.2)
-    #     play("ok")
-    #
-    # elif cmd == 'sound_off':
-    #     play("ok", True)
-    #
-    #     devices = AudioUtilities.GetSpeakers()
-    #     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    #     volume = cast(interface, POINTER(IAudioEndpointVolume))
-    #     volume.SetMute(1, None)
-    #
-    # elif cmd == 'sound_on':
-    #     devices = AudioUtilities.GetSpeakers()
-    #     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    #     volume = cast(interface, POINTER(IAudioEndpointVolume))
-    #     volume.SetMute(0, None)
-    #
-    #     play("ok")
-    #
-    # elif cmd == 'thanks':
-    #     play("thanks")
-    #
-    # elif cmd == 'stupid':
-    #     play("stupid")
-    #
-    # elif cmd == 'gaming_mode_on':
-    #     play("ok")
-    #     subprocess.check_call([f'{CDIR}\\custom-commands\\Switch to gaming mode.exe'])
-    #     play("ready")
-    #
-    # elif cmd == 'gaming_mode_off':
-    #     play("ok")
-    #     subprocess.check_call([f'{CDIR}\\custom-commands\\Switch back to workspace.exe'])
-    #     play("ready")
-    #
-    # elif cmd == 'switch_to_headphones':
-    #     play("ok")
-    #     subprocess.check_call([f'{CDIR}\\custom-commands\\Switch to headphones.exe'])
-    #     time.sleep(0.5)
-    #     play("ready")
-    #
-    # elif cmd == 'switch_to_dynamics':
-    #     play("ok")
-    #     subprocess.check_call([f'{CDIR}\\custom-commands\\Switch to dynamics.exe'])
-    #     time.sleep(0.5)
-    #     play("ready")
-    #
-    # elif cmd == 'off':
-    #     play("off", True)
-    #
-    #     porcupine.delete()
-    #     exit(0)
+    elif cmd == 'gaming_mode_on':
+        play("ok")
+        start_gaming_mode()
+        play("ready")
+    elif cmd == 'gaming_mode_off':
+        play("ok")
+        stop_gaming_mode()
+        play("ready")
+
+    elif cmd == 'stop_all_processes':
+        play("ok")
+        stop_all_processes()
+        play("ready")
+    elif cmd == 'completion_work':
+        play("ok")
+        completion_work()
+
+    elif cmd == 'thanks':
+        play("thanks")
+    elif cmd == 'stupid':
+        play("stupid")
+    elif cmd == 'off':
+        play("off", True)
+        porcupine.delete()
+        exit(0)
+
+    elif cmd == 'sound_on':
+        sound_on()
+        play("ok")
+    elif cmd == 'sound_off':
+        play("ok", True)
+        sound_off()
 
 
 # `-1` is the default input audio device.
@@ -274,7 +285,6 @@ while True:
             if kaldi_rec.AcceptWaveform(sp):
                 if va_respond(json.loads(kaldi_rec.Result())["text"]):
                     ltc = time.time()
-
                 break
 
     except Exception as err:

@@ -21,4 +21,4 @@ CHROME_PATH = 'C:/Users/Admin/Chrom/chrome-win64/chrome.exe'
 PICOVOICE_TOKEN = 'S7d97CcqxxN7ZLITu2H7g1mD2tYlAgJHmfWnSMbIctsMTms5WQzC2A=='
 
 # Токен OpenAI
-OPENAI_TOKEN = os.getenv('OPENAI_TOKEN')
+OPENAI_TOKEN = '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'
